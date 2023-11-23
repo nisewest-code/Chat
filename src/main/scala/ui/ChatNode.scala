@@ -1,68 +1,52 @@
 package ui
 
-import cluster.{Manager, Message}
-import akka.actor.{ActorRef, ActorSystem, Props}
+import akka.actor.typed.ActorSystem
+import cluster.{Manager, Message, TransferMessage}
+import cluster.Manager.Command
+import cluster.Room.TypeRoom
 import com.typesafe.config.ConfigFactory
+import sun.security.ec.ECDSAOperations.Seed
 import ui.ChatNode.{Request, Response}
 import ui.UserController.Messaging
+import ui.ViewPagerController.TypeChat
+import ui.ViewPagerController.TypeChat.TypeChat
 import util.Constants
 
-class ChatNode(userData: UserData, seed: String, messaging: Messaging) extends ChatNode.Terminal with Request with Response{
+class ChatNode(name: String, seed: String, messaging: Messaging) extends ChatNode.Terminal with Request with Response{
 
-  private var manager: ActorRef = _
-  private var system: ActorSystem = _
+  private var system: ActorSystem[Command] = _
   override def startChat(): Unit = {
-    val hostname = userData.ip.substring(0, 9)
-    val port = userData.ip.substring(10).toInt
-    val customConf = ConfigFactory.parseString(
-      s"""akka {
-        actor {
-          provider = "cluster"
-          serialization-bindings {
-                "util.CborSerializable" = jackson-cbor
-          }
-        }
-        remote.artery {
-          enabled = on
-            transport = tcp
-            canonical {
-              hostname = \"$hostname\"
-              port = $port
-            }
-          }
-
-        cluster {
-        akka.cluster.log-info = off
-            seed-nodes = [
-              "akka://${Constants.chatName}@$seed", "akka://${Constants.chatName}@${userData.ip}"]
-            downing-provider-class = "akka.cluster.sbr.SplitBrainResolverProvider"
-            auto-down-unreachable-after = 5s
-          }
-      }""")
-    system = ActorSystem(Constants.chatName, ConfigFactory.load(customConf))
-    manager = system.actorOf(Props(classOf[Manager], userData, seed, this), s"${Constants.managerName}")
-    manager ! Manager.Join()
+      system = ActorSystem(Manager(name, seed, this), Constants.chatName, ConfigFactory.load())
   }
 
   override def stopChat(): Unit = {
-    manager ! Manager.CloseCallback
+    system ! Manager.CloseCallback()
     system.terminate()
   }
 
-  override def sendMessage(message: Message): Unit = {
-    manager ! Manager.SendMessage(message)
+  override def sendMessage(typeChat: TypeChat, message: TransferMessage): Unit = {
+    val typeRoom = if (typeChat == TypeChat.Private){
+      TypeRoom.Private
+    } else {
+      TypeRoom.Public
+    }
+    system ! Manager.SendMessage(typeRoom, message)
   }
 
   override def requestHistory(_userData: UserData): Unit = {
-    manager ! Manager.RequestHistoryMessage(_userData)
+    system ! Manager.RequestHistoryMessage(_userData)
   }
 
-  override def postMessage(message: Message): Unit = {
-    messaging.postMessage(message)
+  override def postMessage(keyChat: BigInt, message: TransferMessage): Unit = {
+    messaging.postMessage(keyChat, message)
   }
 
-  override def postHistoryMessages(_userData: UserData, messages: List[Message]): Unit = {
-    messaging.postHistoryMessages(_userData, messages)
+  override def postData(userData: UserData, seed: String): Unit = {
+    messaging.postData(userData, seed)
+  }
+
+  override def postHistoryMessages(keyChat: BigInt, messages: List[Message]): Unit = {
+    messaging.postHistoryMessages(keyChat, messages)
   }
 
   override def addUser(_userData: UserData): Unit = {
@@ -76,20 +60,21 @@ class ChatNode(userData: UserData, seed: String, messaging: Messaging) extends C
 }
 
 object ChatNode {
-  def apply(userData: UserData, seed: String, messaging: Messaging): ChatNode = new ChatNode(userData, seed, messaging)
+  def apply(name: String, seed: String, messaging: Messaging): ChatNode = new ChatNode(name, seed, messaging)
 
   trait Terminal{
     def startChat(): Unit
     def stopChat(): Unit
   }
   trait Request{
-    def sendMessage(message: Message): Unit
+    def sendMessage(typeChat: TypeChat, message: TransferMessage): Unit
     def requestHistory(userData: UserData): Unit
   }
   trait Response{
+    def postData(userData: UserData, seed: String): Unit
     def addUser(userData: UserData): Unit
     def removeUser(userData: UserData): Unit
-    def postMessage(message: Message): Unit
-    def postHistoryMessages(userData: UserData, messages: List[Message]): Unit
+    def postMessage(keyChat: BigInt, message: TransferMessage): Unit
+    def postHistoryMessages(keyChat: BigInt, messages: List[Message]): Unit
   }
 }

@@ -1,6 +1,6 @@
 package ui
 
-import cluster.Message
+import cluster.{Message, TransferMessage}
 import javafx.application.Platform
 import javafx.collections.{FXCollections, ObservableList}
 import javafx.fxml.FXML
@@ -35,10 +35,8 @@ class ViewPagerController extends Pager{
   private def onClickSend(): Unit = {
     val text: String = textArea.getText()
     if (text.nonEmpty){
-      request.sendMessage(Message(userTo, userFrom, text))
-      if (typeChat == TypeChat.Private){
-        listMessages.add(s"${userFrom.name} : $text")
-      }
+      request.sendMessage(typeChat, cluster.TransferMessage(userTo, userFrom, cluster.Message(userFrom, text)))
+      listMessages.add(s"${userFrom.name} : $text")
     }
     textArea.clear()
   }
@@ -48,22 +46,20 @@ class ViewPagerController extends Pager{
     request = _request
     userFrom = _userFrom
     userTo = _userTo
+    request.requestHistory(userTo)
   }
 
-  override def postMessage(message: Message): Unit = {
+  override def postMessage(message: TransferMessage): Unit = {
     Platform.runLater(() => {
-      val name = if (typeChat == TypeChat.Private){
-        message.userTo.name
-      } else {
-        message.userFrom.name
-      }
-      listMessages.add(s"$name : ${message.msg}")
+      listMessages.add(s"${ message.msg.userFrom} : ${message.msg.msg}")
     })
   }
-
+  import scala.jdk.CollectionConverters._
   override def postHistoryMessages(messages: List[Message]): Unit = {
-    val messagesString = messages.map(message => s"${message.userTo.name} : ${message.msg}")
-//    listMessages.addAll(0, messagesString)
+    val listMessage = listMessages.asScala
+    listMessages.clear()
+    messages.foreach(message => listMessages.add(s"${message.userFrom.name} : ${message.msg}"))
+    listMessage.foreach{ _ => listMessages.add(_)}
   }
 }
 
@@ -73,7 +69,7 @@ object ViewPagerController{
     val Private, Public = Value
   }
   trait Pager {
-    def postMessage(message: Message): Unit
+    def postMessage(message: TransferMessage): Unit
     def postHistoryMessages(messages: List[Message]): Unit
   }
 }

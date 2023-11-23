@@ -1,11 +1,11 @@
 package ui
 
-import cluster.Message
+import cluster.{Message, TransferMessage}
 import javafx.application.Platform
 import javafx.collections.{FXCollections, ListChangeListener, ObservableList}
 import javafx.fxml.{FXML, FXMLLoader}
 import javafx.scene.control.{ListView, Tab, TabPane}
-import javafx.scene.layout.{BorderPane, VBox}
+import javafx.scene.layout.VBox
 import javafx.stage.Stage
 import ui.UserController.Messaging
 import ui.ViewPagerController.TypeChat
@@ -23,6 +23,7 @@ class UserController extends Messaging {
 
   private var chatNode: ChatNode = _
   private var userFrom: UserData = _
+  private var seed: String = _
   private var stage: Stage = _
 
   @FXML
@@ -51,24 +52,25 @@ class UserController extends Messaging {
       } else {
         val itemUser = listUsers.asScala(selectedIndex)
         tabPane.getSelectionModel.select(listTabs.asScala.find(item => item.userData.ip == itemUser.ip && item.userData.name == itemUser.name)
-          .getOrElse(addTab(itemUser, userFrom)).tab)
+          .getOrElse(addTab(
+            itemUser.hashCode() + userFrom.hashCode(),
+            itemUser, userFrom)).tab)
       }
     })
   }
 
-  def transferUserData(_stage: Stage, userData: UserData, seed: String): Unit = {
+  def transferUserData(_stage: Stage, name: String, _seed: String): Unit = {
     stage = _stage
-    userFrom = userData
-    chatNode = ChatNode(userFrom, seed, this)
+    //    userFrom = userData
+    chatNode = ChatNode(name, _seed, this)
     stage.setOnCloseRequest(_ => {
       chatNode.stopChat()
       stage.close()
     })
-    addTab(UserData("Public", seed), userData, isCloseable = false, typeChat = TypeChat.Public)
     chatNode.startChat()
   }
 
-  private def addTab(userTo: UserData, userFrom: UserData, isCloseable: Boolean = true, typeChat: TypeChat = TypeChat.Private): TabCustom = {
+  private def addTab(keyChat: BigInt, userTo: UserData, userFrom: UserData, isCloseable: Boolean = true, typeChat: TypeChat = TypeChat.Private): TabCustom = {
     val resource = UserUI.getClass.getResource(s"../${Constants.pagerLayout}")
     val loader = new FXMLLoader(resource)
     val root: VBox = loader.load()
@@ -79,7 +81,7 @@ class UserController extends Messaging {
     tab.setClosable(isCloseable)
     tab.setContent(root)
     tabPane.getTabs.add(tab)
-    val tabCustom = TabCustom(userTo, controller, tab)
+    val tabCustom = TabCustom(keyChat, userTo, controller, tab)
     listTabs.add(tabCustom)
     tabCustom
   }
@@ -98,33 +100,48 @@ class UserController extends Messaging {
         case Some(value) =>
           listTabs.remove(value)
           tabPane.getTabs.remove(value.tab)
-        case None =>{}
+        case None => {}
       }
 
     })
   }
 
-  override def postMessage(message: Message): Unit = {
+  override def postMessage(keyChat: BigInt, message: TransferMessage): Unit = {
     Platform.runLater(() => {
-//      val itemB = if (message.userTo.name == "Public" && )
-      listTabs.asScala.find(item => item.userData.ip == message.userTo.ip && item.userData.name == message.userTo.name)
-        .getOrElse(addTab(message.userTo, message.userFrom)).pager.postMessage(message)
+      //      val itemB = if (message.userTo.name == "Public" && )
+      listTabs.asScala.find(item => item.keyChat == keyChat)
+        .getOrElse(addTab(keyChat, message.userTo, message.userFrom)).pager.postMessage(message)
     })
   }
 
-  override def postHistoryMessages(userData: UserData, messages: List[Message]): Unit = {
+  override def postHistoryMessages(keyChat: BigInt, messages: List[Message]): Unit = {
     Platform.runLater(() => {
-      listTabs.asScala.find(item => item.userData.ip == userData.ip && item.userData.name == userData.name)
-        .foreach(tab => tab.pager.postHistoryMessages(messages))
+      listTabs.asScala.find(item => item.keyChat == keyChat) match {
+        case Some(value) =>
+          value.pager.postHistoryMessages(messages)
+      }
+    })
+  }
+
+  override def postData(userData: UserData, _seed: String): Unit = {
+    Platform.runLater(() => {
+      seed = _seed
+      stage.setTitle(s"Chat -  ${userData.name} : (${userData.ip})")
+      userFrom = userData
+      addTab(
+        UserData("Public", seed).hashCode(), UserData("Public", seed), userData,
+        isCloseable = false, typeChat = TypeChat.Public)
     })
   }
 }
 
 object UserController {
   trait Messaging {
-    def postMessage(message: Message): Unit
+    def postData(userData: UserData, seed: String): Unit
 
-    def postHistoryMessages(userData: UserData, messages: List[Message]): Unit
+    def postMessage(keyChat: BigInt, message: TransferMessage): Unit
+
+    def postHistoryMessages(keyChat: BigInt, messages: List[Message]): Unit
 
     def addUser(userData: UserData): Unit
 
